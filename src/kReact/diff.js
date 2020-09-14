@@ -1,185 +1,172 @@
-import patch from "./patch";
-/*
-  收集需要更新的内容
-  patches = [
-      {
-        type: "repalce"// 替换节点
-      }, {
-        type: "text" // 更新文本节点
-      }, {
-        type: "attr" // 更新属性
-      }, {
-        type: "remove"// 删除节点
-      }, {
-        type: "insert"// 插入节点
-      }, {
-        type: "move" // 移动节点
-      }
-  ]
-*/
-function diff(oldTree, newTree, createNode) {
-  return diffNode(oldTree, newTree, createNode)
-}
 
-function diffNode(oldNode, newNode, createNode) {
-  //console.log(oldNode, newNode);
-  let newVdom = oldNode;//假设无更新
-  let patches = [];
-  let parent = oldNode.__dom.parentNoe;
-  if ((!oldNode) && (!newNode)) {
-    return newVdom;
-  }
-  if (oldNode.type !== oldNode.type) { //当新老 type 不一致时，代表节点已经改变需要整体替换
-    //console.log("替换节点");
-    newVdom = newNode;
-    let oldDOM = oldNode.__dom;
-    let newDom = createNode(newNode);
-    patches.push({
-      type: "replace",
-      oldNode: oldDOM,
-      parent,
-      newNode: newDom
-    });
-    oldNode.__dom = newDom;
-  } else if (oldNode.type === "string") { //当节点是文本节点时
-    if (oldNode.inner !== newNode.inner) { // 文本节点内容不一致
-      patches.push({
-        type: "text",
-        node: oldNode.__dom,
-        newText: newNode.inner
-      });
-      newVdom.inner = newNode.inner;
+function diff(oldTree, newTree,patch,createNode) {
+    return diffNode(oldTree, newTree, patch,createNode);
+    //return patches;
+}
+function isTextNode(vnode) {
+    return vnode.type === "text";
+}
+function diffNode(oldNode, newNode, patch,createNode) {
+    let patches = [];
+    let newVnode = oldNode;
+    if ((!oldNode) && (!newNode)) {
+        return newVnode;
     }
-  } else if (typeof oldNode.type === "function") { // 组件更新
-    //console.log("组件对比");
-    newVdom = diffCmp(oldNode, newNode, createNode);
-  } else { // 元素节点对比
-    //console.log("对比节点属性");
-    let propsPatches = diffProps(oldNode.props, newNode.props);
-    if (Object.keys(propsPatches).length > 0) {
-      patches.push({
-        type: "attr",
-        node: oldNode.__dom,
-        newProps: propsPatches
-      });
-      newVdom.props = newNode.props;
-    }
-    newVdom.children = diffChildren(oldNode.children, newNode.children, createNode,newVdom.__dom);
-
-    //console.log("对比节点的子元素");
-  }
-  if (patches.length > 0) {
-    patch(patches);
-  }
-  return newVdom;
-}
-
-function diffCmp(oldCmp, newCmp, createNode) {
-  /*
-      判断组件是否需要更新
-  */
-  if (Object.keys(diffProps(oldCmp.props, newCmp.props)).length > 0) { // props 如果有不一样才进行组件更新
-    // 调用 组件的生命周期函数，开始组件更新
-
-    // 更新组件
-    oldCmp._cmp.props = newCmp.props; //更新 props
-
-    // 生成新的虚拟DOM
-    let newVnode = oldCmp._cmp.render();
-    oldCmp._vdom = diffNode(oldCmp._vdom, newVnode, createNode);
-  }
-  return oldCmp;
-}
-
-function diffChildren(oldChild, newChild, createNode,parent) {
-  let newChildren = newChild;
-  let oldKeyChild = setKey(oldChild);
-  let newKeyChild = setKey(newChild);
-  let lastIndex = 0;
-  let patches = [];
-  // 循环新列表
-  for (let s in newKeyChild) {
-    if (oldKeyChild[s]) {
-      // 对比顺序
-      if (oldKeyChild[s].index < lastIndex) { // 顺序有改变
-        let node = oldKeyChild[s].__dom;
-        let prevNode = newChildren[newKeyChild[s].index - 1];
-        let after = prevNode && prevNode.__dom.nextSibling;
+    /*
+        判断节点是否删除
+    */
+    if (oldNode && (!newNode)) {
+        // 有旧节点，没有新节点删除节点
         patches.push({
-          type: "move",
-          node,
-          parent,
-          after
+            type: "remove",
+            node: oldNode._dom
         })
-      } else {
-        lastIndex = oldKeyChild[s].index;
-      }
-      newChildren[newKeyChild[s].index].__dom = oldKeyChild[s].__dom;
-      newChildren[newKeyChild[s].index] = diffNode(oldKeyChild[s], newKeyChild[s], createNode);
+        newVnode = null;
+    } else if (isTextNode(oldNode) && isTextNode(newNode)) {
+        //都是文本节点时
+        if (oldNode.inner !== newNode.inner) {
+            // 新老文本不一样，替换文本节点
+            patches.push({
+                type: "text",
+                newText: newNode.inner,
+                node: oldNode._dom
+            })
+            newVnode.inner = newNode.inner;
+        }
+    } else if (oldNode.type !== newNode.type) {
+        // 两个节点的，节点类型不一样，替换节点
+        newNode._dom = createNode(newNode);
+        patches.push({
+            type: "replace",
+            newNode: newNode._dom,
+            oldNode: oldNode._dom
+        });
+        newVnode = newNode;
+    } else if(typeof oldNode.type === "function"){
+        newVnode = diffComponent(oldNode,newNode,patch,createNode)
     } else {
-      // 添加节点
-      newKeyChild[s].__dom = createNode(newKeyChild[s]);
-      let node = newKeyChild[s].__dom;
-      let prevNode = newChildren[newKeyChild[s].index - 1];
-      let after = prevNode && prevNode.__dom.nextSibling;
-      patches.push({
-        type: "insert",
-        node,
-        parent,
-        after
-      })
-
+        // 节点一样时，要考虑，子节点的对比，属性的对比
+        let propsPatches =  diffProps(oldNode.props,newNode.props);
+        if(Object.keys(propsPatches).length > 0){
+            patches.push({
+                type: "attr",
+                newProps: propsPatches,
+                node: oldNode._dom
+            });
+            newVnode.props = newNode.props;
+        }
+        newVnode.children = diffChildren(oldNode.children,newNode.children,patch,createNode);
     }
-  }
-  for (let s in oldKeyChild) {
-   
-    if (!newKeyChild[s]) {
-      // 删除节点
-      //console.log(oldKeyChild,newKeyChild);
-      patches.push({
-        type: "remove",
-        node: oldKeyChild[s].__dom
-      });
-    }
-  }
-  if (patches.length > 0) {
-    patch(patches);
-  }
+    if(patches.length > 0){
+       // 完成节点的更新
+       patch(patches);
+    }   
+    return newVnode;
+}
+// 组件更新
+function diffComponent(oldCmp,newCmp,patch,createNode){
+    oldCmp._cmp.props = newCmp.props;
+    let oldNode =  oldCmp._vdom;
+    let newNode = oldCmp._cmp.render();
+    oldCmp._vdom = diffNode(oldNode,newNode,patch,createNode);
+    return oldCmp;
+}
+// 列表对比
+function diffChildren(oldChildren,newChildren,patch,createNode){
+    let oldKeyChildren = setKeyChildren(oldChildren);
+    let newKeyChildren = setKeyChildren(newChildren);
+    let lastIndex = 0;
+    let newVChildren = newChildren;
+    let patches = [];
+    let parent = oldChildren[0]._dom.parentNode;
+    for(let k in newKeyChildren){
+        if(oldKeyChildren[k]){//老列表中也有对应项
+            newKeyChildren[k]._dom = oldKeyChildren[k]._dom;
+            newVChildren[newKeyChildren[k]._index] = diffNode(oldKeyChildren[k],newKeyChildren[k],patch,createNode);
+            // 元素位置是否发生过移动
+            /*
+                lastIndex = 0;
+                old: {a:a,index:0},{b:b,index:1},{c:c,index:2}
+                //new: a x b v c
+                new: b x a v c
 
-  return newChildren;
+                后边元素的下标一定大于前边元素，如果后边的元素下边小于前边的元素，说明位置有变化
+            */
+             if(oldKeyChildren[k]._index < lastIndex){ //位置有变化
+                 //console.log("位置有变化",newKeyChildren[k]);
+                 let prev = newChildren[newKeyChildren[k]._index-1];
+                 let after = (prev&&prev._dom.nextSibling);
+                 patches.push({
+                    type:"move",
+                    node: newKeyChildren[k]._dom,
+                    parent,
+                    after
+                 });
+             } else {
+                 lastIndex = oldKeyChildren[k]._index;
+             }
+        } else {//没有对应项 添加
+            //console.log("插入新节点",newKeyChildren[k]);
+            newVChildren[newKeyChildren[k]._index]._dom = createNode(newKeyChildren[k]);
+            let prev = newChildren[newKeyChildren[k]._index-1];
+            let after = (prev&&prev.nextSibling);
+            patches.push({
+                type:"insert",
+                node: newKeyChildren[k]._dom,
+                parent,
+                after
+            });
+        }
+    }
+    for(let k in oldKeyChildren){
+        if(newKeyChildren[k]===undefined){
+            //console.log("删除节点",oldKeyChildren[k]);
+            patches.push({
+                type:"remove",
+                node: oldKeyChildren[k]._dom
+            });
+        }
+    }
+    // 完成更新
+    if(patches.length>0){
+        patch(patches);
+    }
+    return newVChildren;
+}
+// 将虚拟DOM数组
+function setKeyChildren(vnodeList){
+    let keyObj = {};
+    vnodeList.forEach((item,index) => {
+        let key = item.key===undefined?index:item.key;
+        keyObj[key] = item;
+        keyObj[key]._index = index;
+    });
+    return keyObj;
 }
 
-function setKey(child) {
-  let keyChild = {};
-  child.forEach((item, index) => {
-    let key = item.key;
-    key = key !== undefined ? key : index;
-    keyChild[key] = item;
-    keyChild[key].index = index;
-  });
-  return keyChild;
-}
-
-function diffProps(oldProps, newProps) {
-  let patches = {};
-  for (let s in oldProps) {
-    if (newProps[s] !== undefined) {
-      if (newProps[s] !== oldProps[s]) {
-        patches[s] = newProps[s];
-      }
-    } else {
-      patches[s] = null;
+// 属性对比
+function diffProps(oldProps={},newProps={}){
+    let propsPatches = {};
+    // 新加 修改
+    for(let s in newProps){
+        if(typeof newProps[s] === "object"){
+            let childPatches = diffProps(oldProps[s],newProps[s]);
+            if(Object.keys(childPatches).length > 0){
+                propsPatches[s] = childPatches;
+            }
+        } else {
+            if(newProps[s] !== oldProps[s]){
+                propsPatches[s] = newProps[s];
+            }
+        }
     }
-  }
-
-  for (let s in newProps) {
-    if (oldProps[s] !== undefined) {
-      patches[s] = newProps[s];
+    // 删除
+    let newPropsKeys = Object.keys(newProps);
+    for(let s in oldProps){
+        if(!newPropsKeys.includes(s)){
+            propsPatches[s] = null;
+        }
     }
-  }
-
-  return patches;
+    return propsPatches;
 }
-
-
 export default diff;
